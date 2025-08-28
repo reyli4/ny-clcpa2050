@@ -4,9 +4,15 @@
 % nsamples = 87;
 dayofqm = readtable('Data/qm_to_numdays.csv');
 nhours = dayofqm.Days*24;
+nt = 365*24;
 allobj = [];
+if exist('Data/Price/price2030.csv','file')
+    priceVec = readmatrix('Data/Price/price2030.csv');
+else
+    priceVec = zeros(8760,1);
+end
 for scenario = 1
-    result = zeros(22,5);
+    result = zeros(22,8);
     for year = 1998:2019
     %     result = zeros(nsamples,15);
     %     for scenario = 1:nsamples
@@ -52,6 +58,12 @@ for scenario = 1
         nonzerotsls =length(tsls(tsls~=0));
         renewablecurtail = sum(sum(wc))+sum(sum(sc));
         maxls = max(sum(ls(4:49,:),1));
+        winter_hours = [1:1416,8017:8760];
+        summer_hours = 3625:5832;
+        winter_ls = sum(sum(ls(4:49,winter_hours)));
+        summer_ls = sum(sum(ls(4:49,summer_hours)));
+        net = sum(disch,1) - sum(charge,1);
+        revenue = sum(priceVec(1:nt) .* net');
         %  energy needed in X amount of time
             lssum = sum(ls(4:49,:),1);
             horizon = 168;
@@ -65,6 +77,9 @@ for scenario = 1
         result(year-1997,3) = maxls;
         result(year-1997,4) = renewablecurtail;
         result(year-1997,5) = max(energyneed);
+        result(year-1997,6) = winter_ls;
+        result(year-1997,7) = summer_ls;
+        result(year-1997,8) = revenue;
 % % % qm result calculation
 % %         loadshedsum = sum(ls(4:49,:),1);
 % %         tsls = sum(ls(4:49,:));

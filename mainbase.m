@@ -68,9 +68,17 @@ for year = 1998:2019
         SolarUPVbus = SolarUPV(:,1);
         SolarDPVbus = SolarDPV(:,1);
         SolarUPV = SolarUPV(:,starttime+1:starttime+nt)*solar_cap;
-        SolarDPV = SolarDPV(:,starttime+1:starttime+nt)*solar_cap;
-        Windbus = Wind(:,1);
-        Wind = Wind(:,starttime+1:starttime+nt)*wind_cap;
+       SolarDPV = SolarDPV(:,starttime+1:starttime+nt)*solar_cap;
+       Windbus = Wind(:,1);
+       Wind = Wind(:,starttime+1:starttime+nt)*wind_cap;
+
+        % read hourly price vector if available
+        if exist('Data/Price/price2030.csv', 'file')
+            priceVec = readmatrix('Data/Price/price2030.csv');
+            price = priceVec(starttime:starttime+nt-1)';
+        else
+            price = zeros(1,nt);
+        end
     
         %Add wind generators and change the upper bounds for each hour
         windgen = zeros(length(Windbus),21);
@@ -202,6 +210,9 @@ for year = 1998:2019
         for i = 1:length(Storagebus)
             Storagebus(i) = find(mpcreduced.bus(:,1) == Storagebus(i));
         end
+
+        seasonal_bus = find(mpcreduced.bus(:,1)==25); % seasonal storage bus ID
+        seasonal_idx = Storagebus == seasonal_bus;
     
         %read generator upper limits, fixed now, to be changed later for renewables
         Gmax = [];
@@ -276,21 +287,27 @@ for year = 1998:2019
         end
         eff = 0.85;
         effGilboa = 0.75;
+        loss = 0.0005; % hourly self-discharge
         Chargecap = repmat(Storage(:,2),1,nt)*batt_cap;
-        storagecap = repmat(Storage(1:length(Storagebus)-1,2)*battduration,1,nt+1)*batt_cap;
+        battduration_vec = battduration*ones(length(Storagebus)-1,1);
+        battduration_vec(seasonal_idx) = 4000; % seasonal duration
+        storagecap = repmat(Storage(1:length(Storagebus)-1,2).*battduration_vec,1,nt+1)*batt_cap;
         storagecap = [storagecap;repmat(Storage(length(Storagebus),2)*12,1,nt+1)*batt_cap];
         Constraints = [Constraints,0<=charge<=Chargecap];
         Constraints = [Constraints,0<=discharge<=Chargecap];
 %         Constraints = [Constraints,0<=charge<=Chargecap.*bincharge];
 %         Constraints = [Constraints,0<=discharge<=Chargecap.*bindischarge];
 %         Constraints = [Constraints,bincharge + bindischarge==1];
-        Constraints = [Constraints,battstate(1:length(Storagebus)-1,2:nt+1) == battstate(1:length(Storagebus)-1,1:nt) + sqrt(eff)*charge(1:length(Storagebus)-1,:) - 1/sqrt(eff)*discharge(1:length(Storagebus)-1,:)]; 
-        Constraints = [Constraints,battstate(length(Storagebus),2:nt+1) == battstate(length(Storagebus),1:nt) + sqrt(effGilboa)*charge(length(Storagebus),:) - 1/sqrt(effGilboa)*discharge(length(Storagebus),:)];
+        Constraints = [Constraints,
+            battstate(1:length(Storagebus)-1,2:nt+1) == (1-loss)*battstate(1:length(Storagebus)-1,1:nt) + sqrt(eff)*charge(1:length(Storagebus)-1,:) - 1/sqrt(eff)*discharge(1:length(Storagebus)-1,:)];
+        Constraints = [Constraints,
+            battstate(length(Storagebus),2:nt+1) == battstate(length(Storagebus),1:nt) + sqrt(effGilboa)*charge(length(Storagebus),:) - 1/sqrt(effGilboa)*discharge(length(Storagebus),:)];
         Constraints = [Constraints, 0.0*storagecap<=battstate<=storagecap];
+        Constraints = [Constraints, battstate(:,nt+1) == battstate(:,1)];
     
     
         if daytime == 0
-            Constraints = [Constraints,battstate(:,1)==0.3*storagecap(:,1)];
+            Constraints = [Constraints,battstate(:,1)==0.5*storagecap(:,1)];
         else
     %         Constraints = [Constraints,battstate(:,1)==tempbattstate];
             Constraints = [Constraints,battstate(:,1)==initialbatt];
@@ -386,7 +403,8 @@ for year = 1998:2019
     
         %% Solve Optimization
 %         OO = 0;
-        OO =sum(sum(loadshedding))+ 0.05*(sum(sum(charge))+sum(sum(discharge)));
+        revenue = price * (sum(discharge,1) - sum(charge,1))';
+        OO = sum(sum(loadshedding)) + 0.05*(sum(sum(charge))+sum(sum(discharge))) - revenue;
 %         OO = sum(sum(loadshedding));
         options = sdpsettings('verbose',1,'solver','GUROBI');
         options.gurobi.TokenServer = 'infrastructure3.tc.cornell.edu';
